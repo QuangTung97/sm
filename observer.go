@@ -43,6 +43,7 @@ func newObserverState(ns string, kvs []*mvccpb.KeyValue) (*observerState, error)
 	ns = ns + "/"
 
 	const memberPrefix = MemberKeyPrefix + "/"
+	const shardPrefix = ShardKeyPrefix + "/"
 
 	members := map[MemberID]MemberInfo{}
 
@@ -58,6 +59,23 @@ func newObserverState(ns string, kvs []*mvccpb.KeyValue) (*observerState, error)
 			}
 
 			members[MemberID(memberID)] = info
+			continue
+		}
+
+		if strings.HasPrefix(key, shardPrefix) {
+			shardIDStr := strings.TrimPrefix(key, shardPrefix)
+			shardID, err := strconv.ParseUint(shardIDStr, 10, 32)
+			if err != nil {
+				return nil, fmt.Errorf("sm: parse shard id, err: %w", err)
+			}
+
+			info, err := UnmarshalShardInfo(kv.Value)
+			if err != nil {
+				return nil, fmt.Errorf("sm: unmarshal shard data, err: %w", err)
+			}
+
+			info.ID = ShardID(shardID)
+			shards[shardID] = info
 			continue
 		}
 	}
