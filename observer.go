@@ -10,6 +10,10 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
+func computeNamespacePrefix(ns string) string {
+	return "/" + ns + "/"
+}
+
 type observerState struct {
 	ns      string
 	members map[MemberID]MemberInfo
@@ -49,10 +53,9 @@ func findNumShards(ns string, events []*mvccpb.Event) (uint32, error) {
 	return 0, nil
 }
 
-func newObserverState(ns string, kvs []*mvccpb.KeyValue) (*observerState, error) {
-	ns = "/" + ns + "/"
+func newObserverState(namespace string, kvs []*mvccpb.KeyValue) (*observerState, error) {
 	s := &observerState{
-		ns: ns,
+		ns: computeNamespacePrefix(namespace),
 	}
 
 	events := make([]*mvccpb.Event, 0, len(kvs))
@@ -173,7 +176,7 @@ func NewObserverClient(
 		kvClient: kvClient,
 	}
 
-	keyPrefix := ns + "/"
+	keyPrefix := computeNamespacePrefix(ns)
 
 	resp, err := c.kvClient.Get(context.Background(),
 		keyPrefix,
