@@ -11,13 +11,33 @@ import (
 )
 
 type observerState struct {
+	ns      string
 	members map[MemberID]MemberInfo
 	shards  []ShardInfo
 }
 
-func findNumShards(ns string, kvs []*mvccpb.KeyValue) (uint32, error) {
-	numShardsKey := ns + "/" + NumShardsKey
-	for _, kv := range kvs {
+func (s *observerState) cloneMembers() map[MemberID]MemberInfo {
+	result := map[MemberID]MemberInfo{}
+	for k, v := range s.members {
+		result[k] = v
+	}
+	return result
+}
+
+func (s *observerState) cloneShards() []ShardInfo {
+	result := make([]ShardInfo, len(s.shards))
+	copy(result, s.shards)
+	return result
+}
+
+func findNumShards(ns string, events []*mvccpb.Event) (uint32, error) {
+	numShardsKey := ns + NumShardsKey
+	for _, ev := range events {
+		if ev.Type != mvccpb.PUT {
+			continue
+		}
+		kv := ev.Kv
+
 		if string(kv.Key) == numShardsKey {
 			num, err := strconv.ParseUint(string(kv.Value), 10, 32)
 			if err != nil {
@@ -30,24 +50,69 @@ func findNumShards(ns string, kvs []*mvccpb.KeyValue) (uint32, error) {
 }
 
 func newObserverState(ns string, kvs []*mvccpb.KeyValue) (*observerState, error) {
-	numShards, err := findNumShards(ns, kvs)
-	if err != nil {
+	ns = "/" + ns + "/"
+	s := &observerState{
+		ns: ns,
+	}
+
+	events := make([]*mvccpb.Event, 0, len(kvs))
+	for _, kv := range kvs {
+		events = append(events, &mvccpb.Event{
+			Type: mvccpb.PUT,
+			Kv:   kv,
+		})
+	}
+
+	if err := s.handleEventsInternal(events); err != nil {
 		return nil, err
 	}
+	return s, nil
+}
 
-	shards := make([]ShardInfo, numShards)
-	for i := range shards {
-		shards[i].ID = ShardID(i)
+type doOnce struct {
+	done bool
+	fn   func()
+}
+
+func (o *doOnce) doFunc() {
+	if o.done {
+		return
+	}
+	o.fn()
+	o.done = true
+}
+
+func (s *observerState) handleEventsInternal(events []*mvccpb.Event) error {
+	ns := s.ns
+
+	cloneMembersOnce := doOnce{fn: func() { s.members = s.cloneMembers() }}
+	cloneShardsOnce := doOnce{fn: func() { s.shards = s.cloneShards() }}
+
+	numShards, err := findNumShards(ns, events)
+	if err != nil {
+		return err
 	}
 
-	ns = ns + "/"
+	oldLen := uint32(len(s.shards))
+	if numShards > oldLen {
+		cloneShardsOnce.doFunc()
+
+		for i := oldLen; i < numShards; i++ {
+			s.shards = append(s.shards, ShardInfo{
+				ID: ShardID(oldLen + i),
+			})
+		}
+	}
 
 	const memberPrefix = MemberKeyPrefix + "/"
 	const shardPrefix = ShardKeyPrefix + "/"
 
-	members := map[MemberID]MemberInfo{}
+	for _, ev := range events {
+		if ev.Type != mvccpb.PUT {
+			panic("TODO")
+		}
 
-	for _, kv := range kvs {
+		kv := ev.Kv
 		key := strings.TrimPrefix(string(kv.Key), ns)
 
 		if strings.HasPrefix(key, memberPrefix) {
@@ -55,10 +120,11 @@ func newObserverState(ns string, kvs []*mvccpb.KeyValue) (*observerState, error)
 
 			info, err := UnmarshalMemberInfo(kv.Value)
 			if err != nil {
-				return nil, fmt.Errorf("sm: unmarshal member data, err: %w", err)
+				return fmt.Errorf("sm: unmarshal member data, err: %w", err)
 			}
 
-			members[MemberID(memberID)] = info
+			cloneMembersOnce.doFunc()
+			s.members[MemberID(memberID)] = info
 			continue
 		}
 
@@ -66,27 +132,31 @@ func newObserverState(ns string, kvs []*mvccpb.KeyValue) (*observerState, error)
 			shardIDStr := strings.TrimPrefix(key, shardPrefix)
 			shardID, err := strconv.ParseUint(shardIDStr, 10, 32)
 			if err != nil {
-				return nil, fmt.Errorf("sm: parse shard id, err: %w", err)
+				return fmt.Errorf("sm: parse shard id, err: %w", err)
 			}
 
 			info, err := UnmarshalShardInfo(kv.Value)
 			if err != nil {
-				return nil, fmt.Errorf("sm: unmarshal shard data, err: %w", err)
+				return fmt.Errorf("sm: unmarshal shard data, err: %w", err)
 			}
 
+			cloneShardsOnce.doFunc()
 			info.ID = ShardID(shardID)
-			shards[shardID] = info
+			s.shards[shardID] = info
 			continue
 		}
 	}
 
-	return &observerState{
-		members: members,
-		shards:  shards,
-	}, nil
+	return nil
 }
 
-func (s *observerState) handleEvents(events []*mvccpb.Event) {
+func (s *observerState) handleEvents(events []*mvccpb.Event) (*observerState, error) {
+	newState := &observerState{
+		ns:      s.ns,
+		members: s.members,
+		shards:  s.shards,
+	}
+	return newState, newState.handleEventsInternal(events)
 }
 
 type ObserverClient struct {
