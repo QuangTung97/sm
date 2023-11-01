@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"go.etcd.io/etcd/api/v3/mvccpb"
+	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
 func computeNamespacePrefix(ns string) string {
@@ -32,7 +33,7 @@ func (s *observerState) cloneShards() []ShardInfo {
 	return result
 }
 
-func findNumShards(ns string, events []*mvccpb.Event) (uint32, error) {
+func findNumShards(ns string, events []*clientv3.Event) (uint32, error) {
 	numShardsKey := ns + NumShardsKey
 	for _, ev := range events {
 		if ev.Type != mvccpb.PUT {
@@ -69,9 +70,9 @@ func newObserverState(namespace string, kvs []*mvccpb.KeyValue) (*observerState,
 		ns: computeNamespacePrefix(namespace),
 	}
 
-	events := make([]*mvccpb.Event, 0, len(kvs))
+	events := make([]*clientv3.Event, 0, len(kvs))
 	for _, kv := range kvs {
-		events = append(events, &mvccpb.Event{
+		events = append(events, &clientv3.Event{
 			Type: mvccpb.PUT,
 			Kv:   kv,
 		})
@@ -83,7 +84,7 @@ func newObserverState(namespace string, kvs []*mvccpb.KeyValue) (*observerState,
 	return s, nil
 }
 
-func (s *observerState) handleEventsInternal(events []*mvccpb.Event) error {
+func (s *observerState) handleEventsInternal(events []*clientv3.Event) error {
 	ns := s.ns
 
 	cloneMembersOnce := doOnce{fn: func() { s.members = s.cloneMembers() }}
@@ -151,7 +152,7 @@ func (s *observerState) handleEventsInternal(events []*mvccpb.Event) error {
 	return nil
 }
 
-func (s *observerState) handleEvents(events []*mvccpb.Event) (*observerState, error) {
+func (s *observerState) handleEvents(events []*clientv3.Event) (*observerState, error) {
 	newState := &observerState{
 		ns:      s.ns,
 		members: s.members,

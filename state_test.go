@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"go.etcd.io/etcd/api/v3/mvccpb"
+	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
 func newKV(key string, val string) *mvccpb.KeyValue {
@@ -134,7 +135,7 @@ func TestObserverState_HandleEvents(t *testing.T) {
 		s, err := newObserverState("sample", nil)
 		assert.Equal(t, nil, err)
 
-		newState, err := s.handleEvents([]*mvccpb.Event{
+		newState, err := s.handleEvents([]*clientv3.Event{
 			{
 				Type: mvccpb.PUT,
 				Kv:   newKV("/sample/num_shards", "4"),
@@ -155,7 +156,7 @@ func TestObserverState_HandleEvents(t *testing.T) {
 		})
 		assert.Equal(t, nil, err)
 
-		newState, err := s.handleEvents([]*mvccpb.Event{
+		newState, err := s.handleEvents([]*clientv3.Event{
 			{
 				Type: mvccpb.PUT,
 				Kv:   newKV("/sample/num_shards", "4"),
@@ -182,7 +183,7 @@ func TestObserverState_HandleEvents(t *testing.T) {
 		})
 		assert.Equal(t, nil, err)
 
-		newState, err := s.handleEvents([]*mvccpb.Event{
+		newState, err := s.handleEvents([]*clientv3.Event{
 			{
 				Type: mvccpb.PUT,
 				Kv: newShardInfoKV("/sample/shards/2", ShardInfo{
@@ -245,7 +246,7 @@ func TestObserverState_HandleEvents_Concurrent(t *testing.T) {
 			assert.Equal(t, nil, err)
 			return s
 		}, func(s *observerState) {
-			_, err := s.handleEvents([]*mvccpb.Event{
+			_, err := s.handleEvents([]*clientv3.Event{
 				{
 					Type: mvccpb.PUT,
 					Kv: newMemberInfoKV("/sample/members/22", MemberInfo{
